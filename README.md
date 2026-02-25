@@ -104,32 +104,53 @@
 
 \`\`\`typescript
 // functions/api/proxy.ts
-export const onRequestPost: PagesFunction = async (context) => {
+export async function onRequest(context: any) {
   const { request } = context;
-  const { url, method, headers, body } = await request.json() as any;
-
-  try {
-    const response = await fetch(url, {
-      method: method || 'POST',
+  
+  // 处理 CORS 预检
+  if (request.method === "OPTIONS") {
+    return new Response(null, {
+      status: 204,
       headers: {
-        'Content-Type': 'application/json',
-        ...headers
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
       },
-      body: JSON.stringify(body)
     });
-
-    const data = await response.json();
-    return new Response(JSON.stringify(data), {
-      status: response.status,
-      headers: { 'Content-Type': 'application/json' }
-    });
-  } catch (error: any) {
-    return new Response(JSON.stringify({ error: error.message }), { status: 500 });
   }
+
+  // 代理逻辑
+  if (request.method === "POST") {
+    try {
+      const { url, method, headers, body } = await request.json() as any;
+      const response = await fetch(url, {
+        method: method || 'POST',
+        headers: { 'Content-Type': 'application/json', ...headers },
+        body: JSON.stringify(body)
+      });
+      const data = await response.json();
+      return new Response(JSON.stringify(data), {
+        status: response.status,
+        headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
+      });
+    } catch (error: any) {
+      return new Response(JSON.stringify({ error: error.message }), { status: 500 });
+    }
+  }
+
+  return new Response("Method not allowed", { status: 405 });
 }
 \`\`\`
 
-*Cloudflare Pages 会自动识别 \`functions\` 目录并将其部署为 Serverless 接口。*
+*Cloudflare Pages 会自动识别 `functions` 目录并将其部署为 Serverless 接口。*
+
+#### ⚠️ 常见问题：405 Method Not Allowed
+如果你在调用 `/api/proxy` 时遇到 405 错误，通常是因为 Cloudflare 没有成功激活 Functions 脚本。请检查：
+1.  **目录位置**：确保 `functions` 文件夹位于项目**根目录**（与 `package.json` 同级），而不是在 `dist` 或 `src` 内部。
+2.  **路由配置**：项目中已包含 `public/_routes.json`，它会强制 Cloudflare 将 `/api/*` 路径交给 Functions 处理。
+3.  **测试接口**：尝试在浏览器直接访问 `https://你的域名/api/proxy`。
+    *   如果显示 `{"status":"active",...}`，说明函数已激活。
+    *   如果显示你的网页内容或 404，说明函数**未被激活**。请检查 Cloudflare 控制台的部署日志，确保看到 "Functions detected" 字样。
 
 ---
 
