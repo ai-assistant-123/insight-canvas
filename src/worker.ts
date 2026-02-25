@@ -8,11 +8,13 @@ export interface Env {
 export default {
   async fetch(request: Request, env: Env, ctx: any): Promise<Response> {
     const url = new URL(request.url);
+    const pathname = url.pathname;
 
-    // 1. 处理 API 路由
-    if (url.pathname.startsWith('/api/')) {
+    // 1. 处理 API 请求
+    // 使用 includes 增加鲁棒性，防止前缀问题
+    if (pathname.includes('/api/proxy')) {
       
-      // 处理 CORS 预检
+      // CORS 预检
       if (request.method === "OPTIONS") {
         return new Response(null, {
           status: 204,
@@ -25,10 +27,17 @@ export default {
         });
       }
 
-      // 调试接口
-      if (url.pathname === '/api/proxy' && request.method === 'GET') {
-        return new Response(JSON.stringify({ status: "active", message: "Worker Proxy is running" }), {
-          headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
+      // 调试接口 (GET)
+      if (request.method === 'GET') {
+        return new Response(JSON.stringify({ 
+          status: "active", 
+          message: "Insight Canvas Worker Proxy is running",
+          path: pathname
+        }), {
+          headers: { 
+            'Content-Type': 'application/json', 
+            'Access-Control-Allow-Origin': '*'
+          }
         });
       }
 
@@ -63,12 +72,23 @@ export default {
           });
         }
       }
-
-      return new Response("Method not allowed", { status: 405 });
     }
 
-    // 2. 其他所有请求交给静态资源处理 (env.ASSETS)
-    // 这会自动处理 SPA 路由回退到 index.html
-    return env.ASSETS.fetch(request);
+    // 2. 静态资源处理
+    try {
+      const assetResponse = await env.ASSETS.fetch(request);
+      
+      // 如果资源不存在 (404) 且不是 API 请求，则返回 index.html (SPA 支持)
+      if (assetResponse.status === 404 && !pathname.startsWith('/api/')) {
+        const indexRequest = new Request(new URL('/index.html', request.url), request);
+        return env.ASSETS.fetch(indexRequest);
+      }
+      
+      return assetResponse;
+    } catch (e) {
+      // 兜底返回 index.html
+      const indexRequest = new Request(new URL('/index.html', request.url), request);
+      return env.ASSETS.fetch(indexRequest);
+    }
   },
 };
