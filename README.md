@@ -73,12 +73,63 @@
 
 ---
 
-## 🚀 快速开始
+## 🚀 部署指南 (Deployment Guide)
 
+### 1. 本地开发 (Local Development)
 1.  **安装依赖**: `npm install`
 2.  **启动服务**: `npm run dev`
-3.  **配置模型**: 点击右上角 **⚙️ 设置**，填入你的 API Key。
-    *   *提示：建议使用 `gemini-3-flash-preview` 获得极速响应。*
+    *   *注意：本地开发已内置 Express 代理服务器，可自动解决 MiniMax/OpenAI 等接口的 CORS 跨域问题。*
+
+### 2. 部署到 Cloudflare (Cloudflare Pages)
+由于浏览器存在跨域限制，直接部署静态页面无法调用部分 AI 接口。建议使用 **Cloudflare Pages + Functions** 方案：
+
+#### 第一步：准备代码
+1.  将代码推送到 GitHub 仓库。
+2.  确保项目根目录下有 `functions/api/proxy.ts`（见下文）。
+
+#### 第二步：在 Cloudflare 控制台操作
+1.  登录 [Cloudflare Dashboard](https://dash.cloudflare.com/)。
+2.  进入 **Workers & Pages** -> **Create application** -> **Pages** -> **Connect to Git**。
+3.  选择你的 GitHub 仓库。
+4.  **构建设置 (Build settings)**:
+    *   **Framework preset**: `Vite`
+    *   **Build command**: `npm run build`
+    *   **Build output directory**: `dist`
+5.  **环境变量 (Environment variables)**:
+    *   添加 `NODE_VERSION`: `20` (推荐)。
+6.  点击 **Save and Deploy**。
+
+#### 第三步：配置 Pages Functions (处理跨域代理)
+为了让生产环境也支持代理，你需要在 GitHub 仓库中创建 `/functions/api/proxy.ts` 文件：
+
+\`\`\`typescript
+// functions/api/proxy.ts
+export const onRequestPost: PagesFunction = async (context) => {
+  const { request } = context;
+  const { url, method, headers, body } = await request.json() as any;
+
+  try {
+    const response = await fetch(url, {
+      method: method || 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...headers
+      },
+      body: JSON.stringify(body)
+    });
+
+    const data = await response.json();
+    return new Response(JSON.stringify(data), {
+      status: response.status,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  } catch (error: any) {
+    return new Response(JSON.stringify({ error: error.message }), { status: 500 });
+  }
+}
+\`\`\`
+
+*Cloudflare Pages 会自动识别 \`functions\` 目录并将其部署为 Serverless 接口。*
 
 ---
 

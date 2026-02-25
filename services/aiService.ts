@@ -189,7 +189,7 @@ export const restructureToMarkdown = async (
               contents: contents,
               config: { systemInstruction: CONVERTER_SYSTEM_INSTRUCTION }
             }),
-            60000, // 60秒超时，文档转换可能较慢
+            120000, // 120秒超时，文档转换可能较慢
             "文档转换超时，请检查网络或尝试手动复制内容。"
           ).catch(e => {
             if (e.message === 'Load failed') {
@@ -207,34 +207,44 @@ export const restructureToMarkdown = async (
           
           const callOpenAI = async (messages: any[]) => {
             const baseUrl = settings.openaiBaseUrl?.trim() || 'https://api.openai.com/v1';
+            const targetUrl = `${baseUrl}/chat/completions`;
+
             const response = await withTimeout(
-              fetch(`${baseUrl}/chat/completions`, {
+              fetch('/api/proxy', {
                 method: 'POST',
                 headers: {
                   'Content-Type': 'application/json',
-                  'Authorization': `Bearer ${settings.openaiApiKey}`
                 },
                 body: JSON.stringify({
-                  model: settings.openaiModel || 'gpt-4o',
-                  messages: messages,
-                  max_tokens: 4000
+                  url: targetUrl,
+                  method: 'POST',
+                  headers: {
+                    'Authorization': `Bearer ${settings.openaiApiKey}`
+                  },
+                  body: {
+                    model: settings.openaiModel || 'gpt-4o',
+                    messages: messages,
+                    max_tokens: 4000
+                  }
                 })
               }),
-              60000,
+              120000,
               "OpenAI 文档转换超时。"
             ).catch(e => {
               if (e.message === 'Load failed') {
-                throw new Error("网络请求失败 (Load failed)。由于浏览器跨域限制 (CORS)，直接调用 OpenAI 接口可能会失败。建议使用支持跨域的代理 URL 或在服务端进行调用。");
+                throw new Error("网络请求失败 (Load failed)。由于浏览器跨域限制，系统已尝试通过代理访问，请确保开发服务器已启动。");
               }
               throw e;
             });
+
             if (!response.ok) {
-                const errText = await response.text();
+                const errData = await response.json().catch(() => ({}));
+                const errText = errData.message || errData.error || await response.text();
                 if (response.status === 429) throw new Error(`429: ${errText}`);
-                throw new Error(`OpenAI API Error: ${errText}`);
+                throw new Error(`API Error (${response.status}): ${errText}`);
             }
             const data = await response.json();
-            return data.choices[0].message.content || "";
+            return data.choices?.[0]?.message?.content || "";
           };
 
           // OpenAI Vision 处理：发送图片列表
@@ -301,11 +311,11 @@ const callLLM = async (
   settings: AppSettings,
   systemInstruction: string,
   userContent: string,
-  responseSchema?: any
+  responseSchema?: any,
+  timeoutMs: number = 60000 // 默认 60 秒
 ): Promise<string> => {
   let lastError: any;
-  const MAX_RETRIES = 2; // 减少重试次数，提高反馈速度
-  const TIMEOUT_MS = 45000; // 45秒超时
+  const MAX_RETRIES = 2; 
 
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     try {
@@ -329,7 +339,7 @@ const callLLM = async (
             contents: userContent,
             config: config
           }),
-          TIMEOUT_MS,
+          timeoutMs,
           "Gemini 响应超时，请检查网络连接或尝试切换模型。"
         ).catch(e => {
           if (e.message === 'Load failed') {
@@ -357,33 +367,49 @@ const callLLM = async (
         }
 
         const baseUrl = settings.openaiBaseUrl?.trim() || 'https://api.openai.com/v1';
+        const targetUrl = `${baseUrl}/chat/completions`;
+
+        // Use local proxy to avoid CORS issues (like 403 Preflight failure)
         const response = await withTimeout(
-          fetch(`${baseUrl}/chat/completions`, {
+          fetch('/api/proxy', {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              'Authorization': `Bearer ${settings.openaiApiKey}`
             },
-            body: JSON.stringify(body)
+            body: JSON.stringify({
+              url: targetUrl,
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${settings.openaiApiKey}`
+              },
+              body: body
+            })
           }),
-          TIMEOUT_MS,
-          "OpenAI 接口响应超时，请检查 API Base URL 和网络连接。"
+          timeoutMs,
+          "接口响应超时，请检查网络连接。"
         ).catch(e => {
           if (e.message === 'Load failed') {
-            throw new Error("网络请求失败 (Load failed)。由于浏览器跨域限制 (CORS)，直接调用 OpenAI 接口可能会失败。建议使用支持跨域的代理 URL 或在服务端进行调用。");
+            throw new Error("网络请求失败 (Load failed)。这通常是因为浏览器跨域限制。系统已尝试通过代理访问，请确保开发服务器已启动。");
           }
           throw e;
         });
 
         if (!response.ok) {
-           const errText = await response.text();
+           const errData = await response.json().catch(() => ({}));
+           const errText = errData.message || errData.error || await response.text();
            if (response.status === 429) {
                throw new Error(`429 Resource Exhausted: ${errText}`);
            }
-           throw new Error(`OpenAI API Error: ${errText}`);
+           throw new Error(`API Error (${response.status}): ${errText}`);
         }
         const data = await response.json();
-        return data.choices[0].message.content || "";
+        
+        // Handle proxy response structure
+        const content = data.choices?.[0]?.message?.content;
+        if (!content && data.error) {
+           throw new Error(`API Error: ${data.error.message || JSON.stringify(data.error)}`);
+        }
+        return content || "";
       }
     } catch (error: any) {
       lastError = error;
@@ -412,7 +438,23 @@ const callLLM = async (
 
 const cleanJson = (text: string): string => {
   if (!text) return "{}";
-  return text.replace(/```json\n?|```/g, "").trim();
+  
+  // 1. 移除 <think>...</think> 标签及其内容
+  let cleaned = text.replace(/<think>[\s\S]*?<\/think>/g, "").trim();
+  
+  // 2. 移除 Markdown 代码块标记
+  cleaned = cleaned.replace(/```json\n?|```/g, "").trim();
+  
+  // 3. 如果仍然不是以 { 开头，尝试提取第一个 { 和最后一个 } 之间的内容
+  if (!cleaned.startsWith("{")) {
+    const startIdx = cleaned.indexOf("{");
+    const endIdx = cleaned.lastIndexOf("}");
+    if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
+      cleaned = cleaned.substring(startIdx, endIdx + 1);
+    }
+  }
+  
+  return cleaned;
 };
 
 export const generateEditPlan = async (
@@ -459,16 +501,29 @@ export const generateEditPlan = async (
 
     try {
       planningData = JSON.parse(cleanJson(planRaw));
+      
+      // 容错处理：处理模型可能拼错或使用不同命名风格的字段名
+      const findField = (obj: any, target: string, fallbacks: string[]) => {
+        if (obj[target]) return obj[target];
+        for (const fb of fallbacks) {
+          if (obj[fb]) return obj[fb];
+        }
+        // 尝试不区分大小写和下划线的匹配
+        const normalizedTarget = target.toLowerCase().replace(/_/g, "");
+        for (const key of Object.keys(obj)) {
+          if (key.toLowerCase().replace(/_/g, "") === normalizedTarget) return obj[key];
+        }
+        return null;
+      };
+
+      planningData.domain = findField(planningData, "domain", ["field", "area", "specialty"]) || "通用领域";
+      planningData.expertTitle = findField(planningData, "expertTitle", ["title", "role", "expert_title"]) || "资深专家";
+      planningData.expertCompetency = findField(planningData, "expertCompetency", ["expertCompetibility", "expertCompetence", "expert_competency", "competency", "expertCompetancy"]) || "具备深厚的专业知识和行业洞察力";
+      planningData.strategicDirection = findField(planningData, "strategicDirection", ["strategy", "direction", "strategic_direction", "plan"]) || "全面优化文档质量，提升专业性。";
+
     } catch (parseError: any) {
       console.error("Architect JSON Parse Error:", parseError, "Raw content:", planRaw);
       throw new Error(`架构师智能体返回数据解析失败: ${parseError.message}。原始输出片段: ${planRaw.substring(0, 100)}...`);
-    }
-
-    // 验证必要字段
-    const requiredFields = ["domain", "expertTitle", "expertCompetency", "strategicDirection"];
-    const missingFields = requiredFields.filter(field => !planningData[field]);
-    if (missingFields.length > 0) {
-      throw new Error(`架构师智能体返回数据缺失关键字段: ${missingFields.join(", ")}`);
     }
 
   } catch (e: any) {
@@ -531,7 +586,8 @@ export const generateEditPlan = async (
   const dynamicSystemInstruction = createEditorSystemInstruction(planningData);
   
   try {
-    const executionRaw = await callLLM(settings, dynamicSystemInstruction, executePrompt, executionSchema);
+    // Step 2 执行通常涉及大量内容生成，给予更长的超时时间 (120秒)
+    const executionRaw = await callLLM(settings, dynamicSystemInstruction, executePrompt, executionSchema, 120000);
     const executionData = JSON.parse(cleanJson(executionRaw));
 
     return {
