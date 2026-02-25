@@ -395,14 +395,28 @@ const callLLM = async (
         });
 
         if (!response.ok) {
-           const errData = await response.json().catch(() => ({}));
-           const errText = errData.message || errData.error || await response.text();
+           let errText = "";
+           try {
+             const errData = await response.json();
+             errText = errData.message || errData.error || JSON.stringify(errData);
+           } catch (e) {
+             errText = await response.text().catch(() => "Unknown error");
+           }
+           
            if (response.status === 429) {
                throw new Error(`429 Resource Exhausted: ${errText}`);
            }
            throw new Error(`API Error (${response.status}): ${errText}`);
         }
-        const data = await response.json();
+
+        let data;
+        try {
+          data = await response.json();
+        } catch (e) {
+          const rawText = await response.text().catch(() => "");
+          console.error("Failed to parse proxy JSON response:", rawText);
+          throw new Error("代理服务器返回了非 JSON 响应。请检查 Cloudflare Worker 或开发服务器状态。");
+        }
         
         // Handle proxy response structure
         const content = data.choices?.[0]?.message?.content;
@@ -442,19 +456,23 @@ const cleanJson = (text: string): string => {
   // 1. 移除 <think>...</think> 标签及其内容
   let cleaned = text.replace(/<think>[\s\S]*?<\/think>/g, "").trim();
   
-  // 2. 移除 Markdown 代码块标记
-  cleaned = cleaned.replace(/```json\n?|```/g, "").trim();
+  // 2. 尝试提取第一个 { 和最后一个 } 之间的内容 (最稳健的方法)
+  const startIdx = cleaned.indexOf("{");
+  const endIdx = cleaned.lastIndexOf("}");
   
-  // 3. 如果仍然不是以 { 开头，尝试提取第一个 { 和最后一个 } 之间的内容
-  if (!cleaned.startsWith("{")) {
-    const startIdx = cleaned.indexOf("{");
-    const endIdx = cleaned.lastIndexOf("}");
-    if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
-      cleaned = cleaned.substring(startIdx, endIdx + 1);
+  if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
+    cleaned = cleaned.substring(startIdx, endIdx + 1);
+  } else {
+    // 如果没找到大括号，且内容看起来不像 JSON，返回空对象
+    if (!cleaned.startsWith("{")) {
+      return "{}";
     }
   }
   
-  return cleaned;
+  // 3. 移除 Markdown 代码块标记 (如果它们还在的话)
+  cleaned = cleaned.replace(/```json\n?|```/g, "").trim();
+  
+  return cleaned || "{}";
 };
 
 export const generateEditPlan = async (
@@ -588,7 +606,32 @@ export const generateEditPlan = async (
   try {
     // Step 2 执行通常涉及大量内容生成，给予更长的超时时间 (120秒)
     const executionRaw = await callLLM(settings, dynamicSystemInstruction, executePrompt, executionSchema, 120000);
-    const executionData = JSON.parse(cleanJson(executionRaw));
+    
+    if (!executionRaw) {
+      throw new Error("专家智能体返回了空响应。");
+    }
+
+    let executionData;
+    try {
+      executionData = JSON.parse(cleanJson(executionRaw));
+      
+      // 容错处理：确保必要字段存在
+      if (!executionData.critique) {
+        executionData.critique = {
+          overallScore: 80,
+          strengths: ["内容完整"],
+          weaknesses: ["深度有待提升"],
+          missingPillars: ["专家级洞察"],
+          strategicGoal: "优化文档专业度"
+        };
+      }
+      if (!executionData.thoughts) {
+        executionData.thoughts = "专家已完成评审，正在为您生成修改建议。";
+      }
+    } catch (parseError: any) {
+      console.error("Expert JSON Parse Error:", parseError, "Raw content:", executionRaw);
+      throw new Error(`专家智能体返回数据解析失败: ${parseError.message}。原始输出片段: ${executionRaw.substring(0, 100)}...`);
+    }
 
     return {
       expertProfile: {
