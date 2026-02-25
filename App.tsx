@@ -38,9 +38,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   openaiBaseUrl: '',
   openaiApiKey: '',
   openaiModel: '',
-  useProxy: false,
-  proxyUrl: 'https://cors-anywhere.herokuapp.com/',
 };
+
 
 // LaTeX 与 Unicode 符号映射表，用于数学公式的模糊匹配
 const MATH_EQUIVALENTS = [

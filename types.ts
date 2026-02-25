@@ -62,6 +62,4 @@ export interface AppSettings {
   openaiBaseUrl: string;
   openaiApiKey: string;
   openaiModel: string;
-  useProxy?: boolean;
-  proxyUrl?: string;
 }

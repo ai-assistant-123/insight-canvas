@@ -141,36 +141,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
                   支持 OpenAI, DeepSeek, Claude 等兼容接口。
                 </p>
               </div>
-              <div className="pt-2 border-t border-gray-100 space-y-3">
-                <div className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    id="useProxy"
-                    checked={localSettings.useProxy}
-                    onChange={(e) => setLocalSettings(prev => ({ ...prev, useProxy: e.target.checked }))}
-                    className="w-4 h-4 text-brand-600 border-gray-300 rounded focus:ring-brand-500 cursor-pointer"
-                  />
-                  <label htmlFor="useProxy" className="text-sm font-medium text-gray-700 cursor-pointer">启用 CORS 代理 (解决跨域)</label>
-                </div>
-                {localSettings.useProxy && (
-                  <div className="animate-in fade-in slide-in-from-top-1 duration-200">
-                    <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">代理 URL 前缀</label>
-                    <input
-                      type="text"
-                      value={localSettings.proxyUrl}
-                      onChange={(e) => handleChange('proxyUrl', e.target.value)}
-                      placeholder="https://cors-anywhere.herokuapp.com/"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 transition-all text-xs font-mono text-gray-500 bg-gray-50"
-                    />
-                    <p className="text-[10px] text-gray-400 mt-1 italic">
-                      提示：代理将拼接在 API URL 之前。
-                    </p>
-                  </div>
-                )}
-              </div>
             </div>
           )}
         </div>
+
 
         {/* Footer */}
         <div className="p-5 bg-gray-50 border-t border-gray-100 flex justify-end">
