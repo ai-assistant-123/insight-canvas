@@ -191,7 +191,12 @@ export const restructureToMarkdown = async (
             }),
             60000, // 60秒超时，文档转换可能较慢
             "文档转换超时，请检查网络或尝试手动复制内容。"
-          );
+          ).catch(e => {
+            if (e.message === 'Load failed') {
+              throw new Error("网络请求失败 (Load failed)。这通常是因为 API 域名被防火墙拦截或存在跨域限制。请检查网络环境或尝试使用 VPN。");
+            }
+            throw e;
+          });
           return response.text || "";
 
         } else {
@@ -201,22 +206,28 @@ export const restructureToMarkdown = async (
           const systemMsg = { role: 'system', content: CONVERTER_SYSTEM_INSTRUCTION };
           
           const callOpenAI = async (messages: any[]) => {
+            const baseUrl = settings.openaiBaseUrl?.trim() || 'https://api.openai.com/v1';
             const response = await withTimeout(
-              fetch(`${settings.openaiBaseUrl}/chat/completions`, {
+              fetch(`${baseUrl}/chat/completions`, {
                 method: 'POST',
                 headers: {
                   'Content-Type': 'application/json',
                   'Authorization': `Bearer ${settings.openaiApiKey}`
                 },
                 body: JSON.stringify({
-                  model: settings.openaiModel,
+                  model: settings.openaiModel || 'gpt-4o',
                   messages: messages,
                   max_tokens: 4000
                 })
               }),
               60000,
               "OpenAI 文档转换超时。"
-            );
+            ).catch(e => {
+              if (e.message === 'Load failed') {
+                throw new Error("网络请求失败 (Load failed)。由于浏览器跨域限制 (CORS)，直接调用 OpenAI 接口可能会失败。建议使用支持跨域的代理 URL 或在服务端进行调用。");
+              }
+              throw e;
+            });
             if (!response.ok) {
                 const errText = await response.text();
                 if (response.status === 429) throw new Error(`429: ${errText}`);
@@ -320,7 +331,12 @@ const callLLM = async (
           }),
           TIMEOUT_MS,
           "Gemini 响应超时，请检查网络连接或尝试切换模型。"
-        );
+        ).catch(e => {
+          if (e.message === 'Load failed') {
+            throw new Error("网络请求失败 (Load failed)。这通常是因为 API 域名被防火墙拦截或存在跨域限制。请检查网络环境或尝试使用 VPN。");
+          }
+          throw e;
+        });
         return response.text || "";
       } else {
         if (!settings.openaiApiKey) throw new Error("OpenAI API Key is missing. 请在设置中配置 API Key。");
@@ -330,7 +346,7 @@ const callLLM = async (
         ];
         
         const body: any = {
-          model: settings.openaiModel,
+          model: settings.openaiModel || 'gpt-4o',
           messages: messages,
           max_tokens: 8000,
           temperature: 0.7
@@ -340,8 +356,9 @@ const callLLM = async (
            body.response_format = { type: "json_object" };
         }
 
+        const baseUrl = settings.openaiBaseUrl?.trim() || 'https://api.openai.com/v1';
         const response = await withTimeout(
-          fetch(`${settings.openaiBaseUrl}/chat/completions`, {
+          fetch(`${baseUrl}/chat/completions`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -351,7 +368,12 @@ const callLLM = async (
           }),
           TIMEOUT_MS,
           "OpenAI 接口响应超时，请检查 API Base URL 和网络连接。"
-        );
+        ).catch(e => {
+          if (e.message === 'Load failed') {
+            throw new Error("网络请求失败 (Load failed)。由于浏览器跨域限制 (CORS)，直接调用 OpenAI 接口可能会失败。建议使用支持跨域的代理 URL 或在服务端进行调用。");
+          }
+          throw e;
+        });
 
         if (!response.ok) {
            const errText = await response.text();
