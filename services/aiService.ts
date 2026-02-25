@@ -450,6 +450,30 @@ const callLLM = async (
   throw lastError;
 };
 
+const repairJson = (text: string): string => {
+  if (!text) return text;
+  
+  let repaired = text;
+  
+  // 1. 修复常见的 LLM 错误：在根键名之前的多余结束大括号
+  // 例如: "thoughts": "...", }, "tasks": [
+  // 我们匹配 }, 后面跟着一个可能的换行/空格，然后是一个根级别的键名
+  const rootKeys = ["tasks", "critique", "thoughts", "expertProfile", "expertTitle", "domain", "expertCompetency", "strategicDirection"];
+  rootKeys.forEach(key => {
+    const regex = new RegExp(`\\}\\s*,?\\s*"${key}"`, 'g');
+    repaired = repaired.replace(regex, `, "${key}"`);
+  });
+
+  // 2. 修复可能的缺失逗号 (在键值对之间)
+  // 匹配: "value" "nextKey":
+  repaired = repaired.replace(/"\s*\n\s*"(tasks|critique|thoughts|explanation|originalText|replacementText)"\s*:/g, '", "$1":');
+
+  // 3. 修复末尾多余的逗号
+  repaired = repaired.replace(/,\s*([\}\]])/g, '$1');
+
+  return repaired;
+};
+
 const cleanJson = (text: string): string => {
   if (!text) return "{}";
   
@@ -471,6 +495,9 @@ const cleanJson = (text: string): string => {
   
   // 3. 移除 Markdown 代码块标记 (如果它们还在的话)
   cleaned = cleaned.replace(/```json\n?|```/g, "").trim();
+  
+  // 4. 应用启发式修复
+  cleaned = repairJson(cleaned);
   
   return cleaned || "{}";
 };
