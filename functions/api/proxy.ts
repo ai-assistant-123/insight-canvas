@@ -1,17 +1,47 @@
 // functions/api/proxy.ts
 // This file is used by Cloudflare Pages Functions to handle API proxying
-export const onRequestPost: any = async (context: any) => {
+export const onRequest: any = async (context: any) => {
   const { request } = context;
   
+  // Handle CORS Preflight
+  if (request.method === "OPTIONS") {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Requested-With',
+        'Access-Control-Max-Age': '86400',
+      },
+    });
+  }
+
+  // Only allow POST for the proxy logic
+  if (request.method !== "POST") {
+    return new Response(JSON.stringify({ error: `Method ${request.method} not allowed` }), { 
+      status: 405,
+      headers: { 
+        'Content-Type': 'application/json',
+        'Allow': 'POST, OPTIONS'
+      }
+    });
+  }
+  
   try {
-    const { url, method, headers, body } = await request.json() as any;
+    const bodyData = await request.json() as any;
+    const { url, method, headers, body } = bodyData;
 
     if (!url) {
       return new Response(JSON.stringify({ error: "Missing target URL" }), { 
         status: 400,
-        headers: { 'Content-Type': 'application/json' }
+        headers: { 
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*'
+        }
       });
     }
+
+    console.log(`Cloudflare Proxying to: ${url}`);
 
     const response = await fetch(url, {
       method: method || 'POST',
@@ -36,20 +66,10 @@ export const onRequestPost: any = async (context: any) => {
       message: error.message 
     }), { 
       status: 500,
-      headers: { 'Content-Type': 'application/json' }
+      headers: { 
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*'
+      }
     });
   }
-}
-
-// Handle CORS Preflight
-export const onRequestOptions: any = async () => {
-  return new Response(null, {
-    status: 204,
-    headers: {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'POST, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-      'Access-Control-Max-Age': '86400',
-    },
-  });
 }
