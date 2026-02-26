@@ -527,8 +527,21 @@ const repairJson = (text: string): string => {
   const rootKeys = ["tasks", "critique", "thoughts", "expertProfile", "expertTitle", "domain", "expertCompetency", "strategicDirection"];
   
   // 3. 专门修复 "}, key" 模式
+  // 我们需要区分是“合法闭合（如 critique 结束）”还是“提前闭合（如 thoughts 后面误加了 }）”
+  const stringRootKeys = ["thoughts", "expertTitle", "domain", "expertCompetency", "strategicDirection"];
+  
   rootKeys.forEach(key => {
-    // 修复 } 后面缺失逗号的情况
+    // 情况 A: 误加了 } (Stray Brace)
+    // 如果当前键的前一个键是字符串类型的根键，那么中间的 } 极有可能是误加的
+    stringRootKeys.forEach(sKey => {
+      if (sKey === key) return;
+      // 匹配: "sKey": "..." } "key":
+      // 使用非贪婪匹配内容，并确保它看起来像一个完整的键值对
+      const strayRegex = new RegExp(`("${sKey}"\\s*:\\s*"[\\s\\S]*?")\\s*\\}\\s*,?\\s*"?${key}"?\\s*:`, 'g');
+      repaired = repaired.replace(strayRegex, `$1, "${key}":`);
+    });
+
+    // 情况 B: 合法闭合但缺失逗号 (Missing Comma)
     // 匹配: } 后面跟着 "key": (key 可能没有引号)
     // 替换为: }, "key":
     const regex = new RegExp(`\\}\\s*"?${key}"?\\s*:`, 'g');
