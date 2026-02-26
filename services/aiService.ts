@@ -290,18 +290,19 @@ export const restructureToMarkdown = async (
   };
 
   try {
+     let result: string;
      try {
-       return await runConversionAttempt(true);
+       result = await runConversionAttempt(true);
      } catch (e: any) {
        if (e.message === "FATAL_MULTIMODAL_ERROR" || e.message?.includes("OpenAI Vision conversion failed")) {
-          // Fall through to text only
+          console.log("Falling back to text-only conversion...");
+          result = await runConversionAttempt(false);
        } else {
           throw e;
        }
      }
 
-     console.log("Falling back to text-only conversion...");
-     return await runConversionAttempt(false);
+     return removeThinkTags(result);
 
   } catch (error) {
     console.error("AI Conversion Error:", error);
@@ -593,11 +594,15 @@ const repairJson = (text: string): string => {
   return repaired;
 };
 
+const removeThinkTags = (text: string): string => {
+  return text.replace(/<think>[\s\S]*?<\/think>/g, "").trim();
+};
+
 const cleanJson = (text: string): string => {
   if (!text) return "{}";
   
   // 1. 移除 <think>...</think> 标签及其内容
-  let cleaned = text.replace(/<think>[\s\S]*?<\/think>/g, "").trim();
+  let cleaned = removeThinkTags(text);
   
   // 2. 尝试提取第一个 { 和最后一个 } 之间的内容 (最稳健的方法)
   const startIdx = cleaned.indexOf("{");
