@@ -342,8 +342,8 @@ const callLLM = async (
           timeoutMs,
           "Gemini 响应超时，请检查网络连接或尝试切换模型。"
         ).catch(e => {
-          if (e.message === 'Load failed') {
-            throw new Error("网络请求失败 (Load failed)。这通常是因为 API 域名被防火墙拦截或存在跨域限制。请检查网络环境或尝试使用 VPN。");
+          if (e.message === 'Load failed' || e.message === 'Failed to fetch') {
+            throw new Error("网络请求失败 (Failed to fetch)。这通常是因为 API 域名被防火墙拦截或存在跨域限制。请检查网络环境或尝试使用 VPN。");
           }
           throw e;
         });
@@ -388,8 +388,8 @@ const callLLM = async (
           timeoutMs,
           "接口响应超时，请检查网络连接。"
         ).catch(e => {
-          if (e.message === 'Load failed') {
-            throw new Error("网络请求失败 (Load failed)。这通常是因为浏览器跨域限制。系统已尝试通过代理访问，请确保开发服务器已启动。");
+          if (e.message === 'Load failed' || e.message === 'Failed to fetch') {
+            throw new Error("网络请求失败 (Failed to fetch)。这通常是因为浏览器跨域限制或开发服务器未启动。请尝试重启开发服务器。");
           }
           throw e;
         });
@@ -450,26 +450,130 @@ const callLLM = async (
   throw lastError;
 };
 
+const escapeInternalNewlines = (json: string): string => {
+  let inString = false;
+  let escaped = false;
+  let result = "";
+  for (let i = 0; i < json.length; i++) {
+    const char = json[i];
+    const code = char.charCodeAt(0);
+    
+    if (char === '"' && !escaped) {
+      inString = !inString;
+    }
+    
+    if (inString && !escaped && code < 32) {
+      if (char === "\n") result += "\\n";
+      else if (char === "\r") result += "\\r";
+      else if (char === "\t") result += "\\t";
+      else {
+        // Escape other control characters as \uXXXX
+        result += "\\u" + code.toString(16).padStart(4, '0');
+      }
+    } else {
+      result += char;
+    }
+    
+    // Update escaped flag for next character
+    if (char === "\\" && !escaped) {
+      escaped = true;
+    } else {
+      escaped = false;
+    }
+  }
+  return result;
+};
+
+const normalizeSmartQuotes = (json: string): string => {
+  let inStr = false;
+  let escaped = false;
+  let result = "";
+  for (let i = 0; i < json.length; i++) {
+    const char = json[i];
+    if (char === '"' && !escaped) {
+      inStr = !inStr;
+    }
+    // Only replace smart quotes if we are NOT inside a standard string
+    if (!inStr && (char === '\u201C' || char === '\u201D')) {
+      result += '"';
+    } else {
+      result += char;
+    }
+    if (char === '\\' && !escaped) {
+      escaped = true;
+    } else {
+      escaped = false;
+    }
+  }
+  return result;
+};
+
 const repairJson = (text: string): string => {
   if (!text) return text;
   
   let repaired = text;
+
+  // 0. 预处理：智能引号归一化 (Context-aware)
+  repaired = normalizeSmartQuotes(repaired);
   
-  // 1. 修复常见的 LLM 错误：在根键名之前的多余结束大括号
-  // 例如: "thoughts": "...", }, "tasks": [
-  // 我们匹配 }, 后面跟着一个可能的换行/空格，然后是一个根级别的键名
+  // 1. 移除注释
+  repaired = repaired.replace(/^\s*\/\/.*$/gm, '');
+  
+  // 2. 处理字面换行符和控制字符
+  repaired = escapeInternalNewlines(repaired);
+  
   const rootKeys = ["tasks", "critique", "thoughts", "expertProfile", "expertTitle", "domain", "expertCompetency", "strategicDirection"];
+  
+  // 3. 专门修复 "}, key" 模式
   rootKeys.forEach(key => {
-    const regex = new RegExp(`\\}\\s*,?\\s*"${key}"`, 'g');
-    repaired = repaired.replace(regex, `, "${key}"`);
+    // 修复 } 后面缺失逗号的情况
+    // 匹配: } 后面跟着 "key": (key 可能没有引号)
+    // 替换为: }, "key":
+    const regex = new RegExp(`\\}\\s*"?${key}"?\\s*:`, 'g');
+    repaired = repaired.replace(regex, `}, "${key}":`);
   });
 
-  // 2. 修复可能的缺失逗号 (在键值对之间)
-  // 匹配: "value" "nextKey":
-  repaired = repaired.replace(/"\s*\n\s*"(tasks|critique|thoughts|explanation|originalText|replacementText)"\s*:/g, '", "$1":');
+  // 4. 修复可能的缺失逗号 (在键值对之间)
+  // 匹配: "value" "nextKey": 或 "value" nextKey:
+  // 增强版: 处理 "value" 后面紧跟 "nextKey" 的情况
+  // 必须确保 " 是前一个值的结束引号，而不是 key 的开始引号
+  // 逻辑: " 后面必须紧跟另一个 " (即 ""key) 或者空白 (即 " key)
+  repaired = repaired.replace(/"(\s*"|\s+)(tasks|critique|thoughts|explanation|originalText|replacementText)"?\s*:/g, '", "$2":');
 
-  // 3. 修复末尾多余的逗号
+  // 5. 修复双逗号
+  repaired = repaired.replace(/,\s*,/g, ',');
+
+  // 6. 修复数组对象之间缺失的逗号 (} { -> }, {)
+  repaired = repaired.replace(/}\s*{/g, '}, {');
+
+  // 7. 修复对象/数组开头的多余逗号
+  repaired = repaired.replace(/\{[ \t\n\r]*,/g, '{');
+  repaired = repaired.replace(/\[[ \t\n\r]*,/g, '[');
+
+  // 7. 修复末尾多余的逗号
   repaired = repaired.replace(/,\s*([\}\]])/g, '$1');
+
+  // 8. 确保第一个 { 之前没有逗号
+  repaired = repaired.trim();
+  if (repaired.startsWith(',')) {
+    repaired = repaired.substring(1).trim();
+  }
+
+  // 9. 修复未转义的双引号 (针对特定字段)
+  const textFields = ["thoughts", "explanation", "originalText", "replacementText", "critique", "strengths", "weaknesses", "missingPillars", "strategicGoal"];
+  textFields.forEach(field => {
+    // 匹配: "field": "content"
+    // 我们假设 content 结束于 " 后面跟着 , 或 } 或 ]
+    // 并且允许 content 中包含换行符
+    // 使用非贪婪匹配，但要求结尾引号后必须跟分隔符
+    const regex = new RegExp(`("${field}"\\s*:\\s*")([\\s\\S]*?)("(?=\\s*[,}\\]]))`, 'g');
+    repaired = repaired.replace(regex, (match, prefix, content, suffix) => {
+      // 在 content 中，将未转义的 " 替换为 \"
+      // 排除已经是 \" 的情况
+      const escapedContent = content.replace(/(?<!\\)"/g, '\\"');
+      return `${prefix}${escapedContent}${suffix}`;
+    });
+  });
 
   return repaired;
 };
