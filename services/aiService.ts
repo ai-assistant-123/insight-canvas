@@ -249,7 +249,9 @@ export const restructureToMarkdown = async (
 
           // OpenAI Vision 处理：发送图片列表
           if (useMultimodal && fileData.mimeType === 'application/pdf' && fileData.images && fileData.images.length > 0) {
-              const contentParts: any[] = [{ type: "text", text: promptText }];
+              // 优化：即使在视觉模式下也包含原始文本，以兼容不支持视觉能力的“OpenAI 兼容接口”（如 DeepSeek）
+              const fullPrompt = `${promptText}\n\n[备选文本内容 (供参考)]:\n${fileData.data}`;
+              const contentParts: any[] = [{ type: "text", text: fullPrompt }];
               fileData.images.forEach(img => {
                 contentParts.push({ type: "image_url", image_url: { url: img } });
               });

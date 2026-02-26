@@ -2,13 +2,25 @@ import mammoth from 'mammoth';
 import * as PdfJsDist from 'pdfjs-dist';
 
 // 处理 PDF.js 在不同环境下的 ESM 导出结构兼容性
-const pdfjsLib = (PdfJsDist as any).GlobalWorkerOptions 
-  ? PdfJsDist 
-  : (PdfJsDist as any).default || PdfJsDist;
+// 在 Vite/ESM 环境下，PdfJsDist 可能是一个包含 GlobalWorkerOptions 的对象，
+// 也可能是一个包含 default 属性的对象。
+const getPdfjsLib = () => {
+  if ((PdfJsDist as any).GlobalWorkerOptions) {
+    return PdfJsDist;
+  }
+  if ((PdfJsDist as any).default && (PdfJsDist as any).default.GlobalWorkerOptions) {
+    return (PdfJsDist as any).default;
+  }
+  return PdfJsDist;
+};
+
+const pdfjsLib = getPdfjsLib();
 
 // 配置 PDF.js worker
-if (pdfjsLib.GlobalWorkerOptions) {
-  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://esm.sh/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
+if (pdfjsLib && pdfjsLib.GlobalWorkerOptions) {
+  // 使用 jsdelivr 替代 esm.sh，因为 esm.sh 可能会对 worker 脚本进行 ESM 转换，导致 importScripts 失败
+  // jsdelivr 提供的原始文件通常更适合作为 worker
+  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
 }
 
 export interface ImportedFile {
@@ -35,9 +47,17 @@ export const importFileRaw = async (file: File): Promise<ImportedFile> => {
       return { mimeType: 'text/html', data: html };
     } else if (fileName.endsWith('.pdf') || fileType === 'application/pdf') {
       const arrayBuffer = await file.arrayBuffer();
+      // 先转换为 Base64，此时 ArrayBuffer 肯定没被 detach
       const base64 = arrayBufferToBase64(arrayBuffer);
-      const text = await parsePdfToText(arrayBuffer);
-      const images = await parsePdfToImages(arrayBuffer); // 将页面渲染为图片
+      
+      // 加载 PDF 文档一次
+      const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
+      const pdf = await loadingTask.promise;
+      
+      // 从同一个 pdf 实例提取文本和图片
+      const text = await extractTextFromPdf(pdf);
+      const images = await renderPdfToImages(pdf); 
+      
       return { 
         mimeType: 'application/pdf', 
         data: text, 
@@ -78,14 +98,8 @@ const parseDocxToHtml = async (file: File): Promise<string> => {
 };
 
 // 将 PDF 页面渲染为 JPEG 图片流
-// 用于发送给多模态大模型 (Gemini Vision / GPT-4o) 进行视觉理解（如识别复杂公式、图表）
-const parsePdfToImages = async (arrayBuffer: ArrayBuffer): Promise<string[]> => {
-  if (!pdfjsLib.getDocument) {
-    throw new Error("PDF.js library not loaded correctly");
-  }
-
-  const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
-  const pdf = await loadingTask.promise;
+// 用于发送给多模态大模型 (Gemini Vision / GPT-4o) 进行视觉理解
+const renderPdfToImages = async (pdf: any): Promise<string[]> => {
   const images: string[] = [];
   const maxPages = 10; // 限制页数，防止 Payload 过大
   const numPages = Math.min(pdf.numPages, maxPages);
@@ -117,9 +131,7 @@ const parsePdfToImages = async (arrayBuffer: ArrayBuffer): Promise<string[]> => 
 };
 
 // 提取 PDF 纯文本 (作为后备)
-const parsePdfToText = async (arrayBuffer: ArrayBuffer): Promise<string> => {
-  const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
-  const pdf = await loadingTask.promise;
+const extractTextFromPdf = async (pdf: any): Promise<string> => {
   let fullText = '';
   
   for (let i = 1; i <= pdf.numPages; i++) {
