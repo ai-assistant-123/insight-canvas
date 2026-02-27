@@ -78,12 +78,29 @@ export const ExpertCritiqueCard: React.FC<Props> = ({ plan }) => {
 
         {/* Strategic Goal */}
         <div className="flex gap-3">
-          <Target className="text-accent-500 shrink-0 mt-1" size={18} />
+          <Target className="text-brand-500 shrink-0 mt-1" size={18} />
           <div>
             <h4 className="font-bold text-slate-800 text-sm mb-1">优化战略目标</h4>
             <p className="text-slate-600 text-sm leading-relaxed">{critique.strategicGoal}</p>
           </div>
         </div>
+
+        {/* Change Summary (New) */}
+        {critique.changeSummary && critique.changeSummary.length > 0 && (
+            <div className="bg-brand-50/50 rounded-lg p-3 border border-brand-100">
+                <h4 className="flex items-center gap-2 font-bold text-brand-800 text-xs uppercase tracking-wide mb-2">
+                    <Check size={14} /> 修改要点 (Changes)
+                </h4>
+                <ul className="space-y-1">
+                    {critique.changeSummary.map((c, i) => (
+                        <li key={i} className="text-brand-700 text-xs flex gap-1.5">
+                            <span className="mt-1.5 w-1 h-1 bg-brand-400 rounded-full shrink-0"></span>
+                            {c}
+                        </li>
+                    ))}
+                </ul>
+            </div>
+        )}
 
         {/* Missing Pillars */}
         {critique.missingPillars && critique.missingPillars.length > 0 && (

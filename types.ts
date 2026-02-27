@@ -29,6 +29,7 @@ export interface CritiqueReport {
   weaknesses: string[];
   missingPillars: string[]; // Key theoretical concepts missing
   strategicGoal: string; // The high-level goal for optimization
+  changeSummary?: string[]; // Summary of what was changed (especially for full rewrite)
 }
 
 export interface PlanResponse {
@@ -54,9 +55,12 @@ export interface ChatMessage {
 }
 
 export type AIProvider = 'gemini' | 'openai';
+export type EditMode = 'atomic' | 'full';
 
 export interface AppSettings {
   provider: AIProvider;
+  editMode: EditMode;
+  rewriteIterations: number; // Number of times to iterate in full rewrite mode
   geminiApiKey: string; // User override or env
   geminiModel: string; // User selected model
   openaiBaseUrl: string;

@@ -63,7 +63,7 @@ const PLANNER_SYSTEM_INSTRUCTION = `
 `;
 
 // --- 第二阶段：执行智能体 (Editor Agent) ---
-const createEditorSystemInstruction = (plan: any) => `
+const createEditorSystemInstruction = (plan: any, editMode: 'atomic' | 'full' = 'atomic') => `
 ### 角色与身份 (ROLE & IDENTITY)
 你现在是 **${plan.expertTitle}** (${plan.expertCompetency})。
 你的专业领域是 **${plan.domain}**。
@@ -90,10 +90,16 @@ const createEditorSystemInstruction = (plan: any) => `
 - **领域纯度**：你必须*完全*在 **${plan.domain}** 的逻辑框架内思考和写作。
 - **无幻觉**：仅使用现有的、标准的专业术语。
 
-### 4. 执行：原子化编辑任务 (ATOMIC EDIT TASKS)
+### 4. 执行：${editMode === 'full' ? '全文重写任务 (FULL REWRITE)' : '原子化编辑任务 (ATOMIC EDIT TASKS)'}
+${editMode === 'full' ? `
+- **行动**：基于你的专家视角和用户指令，**重写整个文档**。
+- **要求**：输出一个完整的、优化后的 Markdown 文档。
+- **结构**：保持原有的 Markdown 结构，但大幅提升内容质量。
+` : `
 - **行动**：创建“原子化编辑任务”，精确地用专家文本替换薄弱文本。
 - **精确性要求**：'originalText' 必须是源文中**字符级完全一致的副本 (EXACT COPY)**，以便自动化 Diff 程序进行替换。
 - **数量控制**：专注于 3-5 个最具决定性的修改，不要为了改而改。
+`}
 
 ### 输出协议 (JSON):
 返回一个符合此 Schema 的 JSON 对象。所有内容必须使用 **简体中文**。
@@ -104,20 +110,26 @@ const createEditorSystemInstruction = (plan: any) => `
     "strengths": ["... (优势点)"],
     "weaknesses": ["... (痛点)"],
     "missingPillars": ["... (缺失的关键理论/概念)"], 
-    "strategicGoal": "总结本次编辑的具体目标"
+    "strategicGoal": "总结本次编辑的具体目标",
+    "changeSummary": ["... (具体修改了哪些地方，尤其是全文重写模式下)"]
   },
   "thoughts": "内心独白：你是如何代入 '${plan.expertTitle}' 这个角色的？针对用户的指令，你采取了什么策略？(中文)",
   "tasks": [
     {
-      "explanation": "为什么要改？(中文)",
-      "originalText": "必须是源文中存在的、字符级精确匹配的片段",
-      "replacementText": "修改后的文本"
+      "explanation": "${editMode === 'full' ? '总结本次全文优化的核心逻辑' : '为什么要改？(中文)'}",
+      "originalText": "${editMode === 'full' ? 'FULL_DOCUMENT' : '必须是源文中存在的、字符级精确匹配的片段'}",
+      "replacementText": "${editMode === 'full' ? '优化后的完整全文' : '修改后的文本'}"
     }
   ]
 }
 
 ### 关键规则 (CRITICAL RULES):
-1.  **精确匹配 (Exact Match)**：'originalText' 必须极其精准，包含标点符号和空格。不要自己意译原文。
+${editMode === 'full' ? `
+1. **全文输出**：'replacementText' 必须包含文档的全部内容，从标题到结尾。
+2. **标记**：'originalText' 必须固定为字符串 "FULL_DOCUMENT"。
+` : `
+1. **精确匹配 (Exact Match)**：'originalText' 必须极其精准，包含标点符号和空格。不要自己意译原文。
+`}
 2.  **不要过度解释**：不要在中文术语后加括号解释英文，除非是行业惯用的缩写（如 SaaS, AI, EBITDA）。
 `;
 
@@ -731,9 +743,10 @@ export const generateEditPlan = async (
           strengths: { type: Type.ARRAY, items: { type: Type.STRING } },
           weaknesses: { type: Type.ARRAY, items: { type: Type.STRING } },
           missingPillars: { type: Type.ARRAY, items: { type: Type.STRING } },
-          strategicGoal: { type: Type.STRING }
+          strategicGoal: { type: Type.STRING },
+          changeSummary: { type: Type.ARRAY, items: { type: Type.STRING } }
         },
-        required: ["overallScore", "strengths", "weaknesses", "missingPillars", "strategicGoal"]
+        required: ["overallScore", "strengths", "weaknesses", "missingPillars", "strategicGoal", "changeSummary"]
       },
       thoughts: { type: Type.STRING },
       tasks: {
@@ -752,7 +765,7 @@ export const generateEditPlan = async (
     required: ["critique", "thoughts", "tasks"]
   };
 
-  const dynamicSystemInstruction = createEditorSystemInstruction(planningData);
+  const dynamicSystemInstruction = createEditorSystemInstruction(planningData, settings.editMode);
   
   try {
     // Step 2 执行通常涉及大量内容生成，给予更长的超时时间 (120秒)

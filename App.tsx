@@ -33,6 +33,8 @@ const INITIAL_CONTENT = `# Insight Canvas (洞见画布)
 
 const DEFAULT_SETTINGS: AppSettings = {
   provider: 'gemini',
+  editMode: 'atomic',
+  rewriteIterations: 1,
   geminiApiKey: '',
   geminiModel: 'gemini-3-flash-preview',
   openaiBaseUrl: '',
@@ -391,20 +393,49 @@ const App: React.FC = () => {
     
     setIsLoading(true);
 
-    try {
-      // 调用双智能体服务生成修改方案
-      const plan: PlanResponse = await generateEditPlan(content, userPrompt, settings);
-      
-      setTasks(plan.tasks);
+    const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-      const aiMsg: ChatMessage = {
-        id: (Date.now() + 1).toString(),
-        role: 'assistant',
-        content: `专家视界已开启。主理专家 [${plan.expertProfile.title}] 已生成 ${plan.tasks.length} 个升维建议。`,
-        timestamp: Date.now(),
-        expertPlan: plan // 将 Plan 数据传递给消息卡片组件进行渲染
-      };
-      setMessages(prev => [...prev, aiMsg]);
+    try {
+      let currentContent = content;
+      let finalPlan: PlanResponse | null = null;
+      const iterations = settings.editMode === 'full' ? (settings.rewriteIterations || 1) : 1;
+
+      for (let i = 0; i < iterations; i++) {
+        const plan: PlanResponse = await generateEditPlan(currentContent, userPrompt, settings);
+        finalPlan = plan;
+
+        if (settings.editMode === 'full') {
+          const fullTask = plan.tasks.find(t => t.originalText === 'FULL_DOCUMENT');
+          if (fullTask) {
+            currentContent = fullTask.replacementText;
+            setContent(currentContent);
+            // Mark as applied
+            fullTask.status = 'applied';
+          }
+        } else {
+          break;
+        }
+
+        // Rate limit protection
+        if (i < iterations - 1) {
+          await sleep(2000);
+        }
+      }
+
+      if (finalPlan) {
+        setTasks(finalPlan.tasks);
+
+        const aiMsg: ChatMessage = {
+          id: (Date.now() + 1).toString(),
+          role: 'assistant',
+          content: settings.editMode === 'full' 
+            ? `专家视界已开启。主理专家 [${finalPlan.expertProfile.title}] 已完成 ${iterations} 轮全文升维优化。`
+            : `专家视界已开启。主理专家 [${finalPlan.expertProfile.title}] 已生成 ${finalPlan.tasks.length} 个升维建议。`,
+          timestamp: Date.now(),
+          expertPlan: finalPlan // 将 Plan 数据传递给消息卡片组件进行渲染
+        };
+        setMessages(prev => [...prev, aiMsg]);
+      }
 
     } catch (error: any) {
       const errorMsg: ChatMessage = {
@@ -782,7 +813,7 @@ const App: React.FC = () => {
         </div>
 
         {/* Tasks (Sticky Bottom) - 任务列表 */}
-        {tasks.length > 0 && (
+        {tasks.some(t => t.status === 'pending' || t.status === 'failed') && (
            <div className="border-t border-gray-100 bg-slate-50/50 max-h-[250px] overflow-y-auto flex flex-col">
               <div className="sticky top-0 bg-white/80 backdrop-blur z-10 px-4 py-2 flex justify-between items-center border-b border-gray-100">
                  <span className="text-xs font-bold text-slate-500 uppercase">专家建议 ({pendingCount})</span>
